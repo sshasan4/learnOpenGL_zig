@@ -4,49 +4,67 @@ const gl = zopengl.bindings;
 
 pub const VAO = struct {
     id: u32 = undefined,
+    mode: c_uint,
+    buffer_size: c_int = 0,
+    element_count: c_int = 0,
 
-    pub fn init() VAO {
-        var vao: VAO = .{};
+    /// Registers openGL vertex array, returns field `.id`
+    pub fn create(drawmode: c_uint) VAO {
+        var vao: VAO = .{ .mode = drawmode };
         gl.genVertexArrays(1, &vao.id);
         return vao;
     }
+    /// Set this to current VAO
     pub fn bind(self: *@This()) void {
         gl.bindVertexArray(self.id);
     }
+    /// Set active VAO to nothing
     pub fn unbind(_: *@This()) void {
         gl.bindVertexArray(0);
     }
-    pub fn deinit(self: *@This()) void {
+    /// Clean up function, deletes from gpu
+    pub fn delete(self: *@This()) void {
         gl.deleteVertexArrays(1, &self.id);
     }
-
-    pub fn genBuffer(self: *@This(), buffer_type: comptime_int, data: anytype, usage: comptime_int) VBO {
+    /// Create a buffer object, add it to VAO's table of 'buffer_type'
+    pub fn genBuffer(self: *@This(), buffer_type: comptime_int, data: anytype, usage: comptime_int) BufferObj {
         self.bind();
         defer self.unbind();
-        var vbo: VBO = .{
-            .VAO_id = self.id,
+        var vbo: BufferObj = .{
+            .vao = self,
             .buff_type = buffer_type,
         };
         gl.genBuffers(1, &vbo.id);
         gl.bindBuffer(buffer_type, vbo.id);
         defer gl.bindBuffer(buffer_type, 0);
-        gl.bufferData(buffer_type, data.len * @sizeOf(@TypeOf(data[0])), data.ptr, usage);
+        const buffer_byte_size = data.len * @sizeOf(@TypeOf(data[0]));
+        gl.bufferData(buffer_type, buffer_byte_size, data.ptr, usage);
+        if (self.buffer_size == 0) {
+            self.buffer_size = buffer_byte_size;
+        }
         return vbo;
+    }
+    /// Draw function only draws with drawArrays for now. Uses first buffer size and stride to calculate element count
+    pub fn draw(self: *@This(), mode:c_uint) void {
+        gl.drawArrays(mode, 0, self.element_count);
     }
 };
 
-pub const VBO = struct {
-    VAO_id: u32 = undefined,
+pub const BufferObj = struct {
+    vao: *VAO,
     id: u32 = undefined,
     buff_type: c_uint,
     index: c_uint = 0,
     stride: c_int = 0,
 
-    pub fn deinit(self: *@This()) void {
+    // Clean up function, deletes from gpu
+    pub fn delete(self: *@This()) void {
         gl.deleteBuffers(1, &self.id);
     }
+
+    /// Adds fields to buffer object. Use function only once or else you mess up stride
     pub fn addAttrib(self: *@This(), countArr: []const c_int, attrib_typeArr: []const c_uint) void {
-        gl.bindVertexArray(self.VAO_id);
+        gl.bindVertexArray(self.vao.id);
         defer gl.bindVertexArray(0);
         gl.bindBuffer(self.buff_type, self.id);
         defer gl.bindBuffer(self.buff_type, 0);
@@ -69,6 +87,9 @@ pub const VBO = struct {
             gl.vertexAttribPointer(self.index, count, attrib_type, gl.FALSE, self.stride, null);
             gl.enableVertexAttribArray(self.index);
             self.index += 1;
+        }
+        if (self.vao.element_count == 0) {
+            self.vao.element_count = @divExact(self.vao.buffer_size, self.stride);
         }
     }
 };
